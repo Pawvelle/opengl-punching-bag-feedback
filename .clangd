@@ -1,0 +1,7 @@
+CompileFlags:
+  Add:
+    - "-I/opt/homebrew/include"
+    - "-I/opt/homebrew/Cellar/glm/1.0.3/include"
+    - "-I/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/System/Library/Frameworks"
+    - "-std=c++17"
+    - "-DGL_SILENCE_DEPRECATION"
