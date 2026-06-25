@@ -473,10 +473,12 @@ static float g_lastForce = 0.f;
 static float g_flashTime = 0.f;   // 命中后沙袋闪光计时
 
 // 反馈增强相关
-static float g_hitCooldown  = 0.f;  // 击打冷却计时（秒），>0 时忽略新命中
-static float g_shakeTime    = 0.f;  // 相机震动剩余时间（秒）
-static float g_shakeMag     = 0.f;  // 相机震动强度（米）
-static float g_forceDisplay = 0.f;  // HUD 力度条显示值（带缓慢衰减）
+static double g_lastHitTime = -1.0;           // 上次命中时间戳（glfwGetTime），用于冷却判断
+static constexpr double HIT_COOLDOWN = 0.12;  // 击打冷却时间（秒），防止一次滑动连发
+static float  g_shakeTime    = 0.f;           // 相机震动剩余时间（秒）
+static float  g_shakeMag     = 0.f;           // 相机震动强度（米）
+static constexpr float SHAKE_DUR = 0.16f;     // 相机震动总时长（秒）
+static float  g_forceDisplay = 0.f;           // HUD 力度条显示值（带缓慢衰减）
 
 // 鼠标输入
 static double g_mouseX   = 0.0, g_mouseY   = 0.0;
@@ -525,8 +527,10 @@ static void drawMesh(const MeshObj& m) {
 // 命中检测
 // ============================================================
 static void tryHit(double dx, double dy) {
-    // 击打冷却：避免一次快速滑动在连续多帧回调里反复触发命中
-    if (g_hitCooldown > 0.f) return;
+    // 击打冷却：用 glfwGetTime() 记录上次命中时间，距上次不足 HIT_COOLDOWN 秒则忽略。
+    // 这样一次快速滑动跨越的多帧鼠标回调只判定一次命中，但不影响正常的连续快速出拳。
+    double nowT = glfwGetTime();
+    if (g_lastHitTime >= 0.0 && (nowT - g_lastHitTime) < HIT_COOLDOWN) return;
 
     // 鼠标单次移动距离（像素）
     float dist = sqrtf((float)(dx*dx + dy*dy));
@@ -557,16 +561,18 @@ static void tryHit(double dx, double dy) {
 
     // ===== 命中成功 =====
     ++g_hitCount;
-    g_flashTime    = 0.5f;
-    g_hitCooldown  = 0.12f;   // 进入 0.12s 冷却，防止连发
+    g_flashTime   = 0.5f;
+    g_lastHitTime = nowT;     // 记录命中时间，进入冷却
 
-    // 力度：将滑动距离映射到 [0,1]
-    float force = std::min(dist / SWIPE_MAX, 1.f);
-    g_lastForce    = force;
+    // 力度映射：先把滑动距离归一化到 [0,1]，再用 smoothstep 风格 S 曲线。
+    // 小幅滑动被压低（手感更柔和），中高幅快速滑动迅速上升（更有爆发感）。
+    float t     = std::clamp((dist - SWIPE_MIN) / (SWIPE_MAX - SWIPE_MIN), 0.f, 1.f);
+    float force = glm::smoothstep(0.f, 1.f, t);
+    g_lastForce    = force;   // 保留用于窗口标题显示
     g_forceDisplay = force;   // 同步更新 HUD 力度条
 
-    // 触发相机震动：力度越大震动越明显（持续 0.15s）
-    g_shakeTime = 0.15f;
+    // 触发相机震动：力度越大震动越明显
+    g_shakeTime = SHAKE_DUR;
     g_shakeMag  = 0.025f + force * 0.05f;
 
     // 鼠标滑动方向（单位向量，屏幕坐标系）
@@ -577,15 +583,25 @@ static void tryHit(double dx, double dy) {
     float relX = std::clamp(mdx / screenR, -1.f, 1.f);  // 负 = 命中左侧
     float relY = std::clamp(mdy / screenR, -1.f, 1.f);  // 负 = 命中上部
 
-    // ---- 冲量分解（增强：左右摆动 / 自旋反馈更明显） ----
-    // 水平滑动 → 沙袋左右摆动（angleX 方向）
-    // 垂直滑动 → 沙袋前后摆动（angleZ 方向）
-    // 偏侧命中 → 绕纵轴自旋（命中左/右侧自旋方向相反）
-    float scale   = force * 4.2f;                  // 摆动冲量增强
-    float impX    =  dirX * scale + relX * force;  // 叠加命中偏移的横向推力
-    float impZ    =  dirY * scale * 0.45f;         // 前后摆动冲量（鼠标向下→沙袋向前）
-    float impSpin =  relX * force * 3.2f;          // 偏心力 → 自旋（更明显）
+    // ---- 冲量分解（增强方向感与命中位置区分） ----
+    // 水平滑动 → 沙袋左右摆动（angleX 方向，dirX>0 向右、dirX<0 向左）
+    // 任意强力出拳 → 额外把沙袋推向后方（远离相机, -Z），更符合"被击中"直觉
+    // 命中位置：下部(relY>0)力臂长→摆幅更大，上部(relY<0)力臂短→摆幅更小
+    // 偏侧命中(relX) → 绕纵轴自旋，命中左/右侧自旋方向相反
+    float scale = force * 4.6f;                     // 摆动冲量随力度增强
 
+    // 纵向命中位置修正系数：下部放大、上部缩小摆幅
+    float vert  = 1.f + relY * 0.35f;
+
+    // 左右摆动：滑动横向分量 + 命中偏移横推，再乘命中位置修正
+    float impX  = (dirX * scale + relX * force) * vert;
+    // 前后摆动：鼠标垂直分量带来的前后推力，叠加"横扫也会把沙袋推向后方"的分量
+    float impZ  = (dirY * scale * 0.45f
+                   - fabsf(dirX) * scale * 0.30f) * vert;
+    // 自旋：偏心命中越靠边，自旋越强（左右方向相反）
+    float impSpin = relX * force * 3.6f;
+
+    // 注意：BagPhysics::step() 内仍有最大摆角钳制(±0.75rad)与阻尼，沙袋不会飞走
     g_bag.impulse(impX, impZ, impSpin);
 
     // 命中点（沙袋朝向相机面的表面）
@@ -621,12 +637,18 @@ static void cbKey(GLFWwindow* win, int key, int, int action, int) {
     if (action != GLFW_PRESS) return;
     if (key == GLFW_KEY_ESCAPE) glfwSetWindowShouldClose(win, GLFW_TRUE);
     if (key == GLFW_KEY_R) {
-        // 重置沙袋状态
+        // 重置沙袋角度 / 速度 / 自旋（原有功能，保持不变）
         g_bag.angleX = g_bag.angleZ = 0.f;
         g_bag.velX   = g_bag.velZ   = 0.f;
         g_bag.spinAngle = g_bag.spinVel = 0.f;
         g_particles.clear();
         g_flashTime = 0.f;
+        // 同步归零新增的反馈状态：冷却 / 震动 / 力度条 / 冲击环
+        g_lastHitTime  = -1.0;   // 允许重置后立即出拳
+        g_shakeTime    = 0.f;
+        g_shakeMag     = 0.f;
+        g_forceDisplay = 0.f;
+        g_rings.clear();
         std::cout << "[重置] 沙袋已归位\n";
     }
 }
@@ -636,12 +658,14 @@ static void cbKey(GLFWwindow* win, int key, int, int action, int) {
 // ============================================================
 
 // 设置主着色器公共 uniform（光照、相机）
-static void setSceneUniforms(const glm::mat4& view, const glm::mat4& proj) {
+// eyePos 传入"实际"相机位置（含震动偏移），保证镜面高光计算与 view 矩阵一致
+static void setSceneUniforms(const glm::mat4& view, const glm::mat4& proj,
+                             const glm::vec3& eyePos) {
     glUseProgram(g_progMain);
     uMat4(g_progMain, "uView",     view);
     uMat4(g_progMain, "uProj",     proj);
     uVec3(g_progMain, "uLightPos", g_lightPos);
-    uVec3(g_progMain, "uViewPos",  g_camPos);
+    uVec3(g_progMain, "uViewPos",  eyePos);
 }
 
 // 绘制一个主场景网格（设置 model + 材质后调用）
@@ -781,9 +805,8 @@ int main() {
         stepRings(dt);
         if (g_flashTime > 0.f) g_flashTime = std::max(0.f, g_flashTime - dt * 1.8f);
 
-        // 冷却 / 相机震动 / 力度条 计时更新
-        if (g_hitCooldown > 0.f) g_hitCooldown = std::max(0.f, g_hitCooldown - dt);
-        if (g_shakeTime   > 0.f) g_shakeTime   = std::max(0.f, g_shakeTime   - dt);
+        // 相机震动 / 力度条 计时更新（冷却已改为基于 glfwGetTime，无需逐帧递减）
+        if (g_shakeTime > 0.f) g_shakeTime = std::max(0.f, g_shakeTime - dt);
         g_forceDisplay = std::max(0.f, g_forceDisplay - dt * 0.35f);  // 缓慢回落
 
         // ---- 更新窗口标题（显示实时力度、命中次数、操作说明） ----
@@ -805,14 +828,15 @@ int main() {
         glm::vec3 camPos = g_camPos;
         if (g_shakeTime > 0.f) {
             std::uniform_real_distribution<float> j(-1.f, 1.f);
-            float k = (g_shakeTime / 0.15f) * g_shakeMag;  // 越接近结束抖动越弱
+            float k = (g_shakeTime / SHAKE_DUR) * g_shakeMag;  // 越接近结束抖动越弱
             camPos += glm::vec3(j(g_rng), j(g_rng), j(g_rng)) * k;
         }
         glm::mat4 view = glm::lookAt(camPos, g_camTgt, {0.f, 1.f, 0.f});
         glm::mat4 proj = glm::perspective(glm::radians(45.f),
                                           (float)g_width / g_height, 0.1f, 100.f);
 
-        setSceneUniforms(view, proj);
+        // 把含震动的实际相机位置 camPos 传入，保证镜面光照(uViewPos)正确
+        setSceneUniforms(view, proj, camPos);
 
         // ===== [1] 绘制地面 =====
         drawSceneMesh(g_mGnd, glm::mat4(1.f),
