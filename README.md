@@ -57,31 +57,74 @@ vcpkg install glfw3 glm glew --triplet x64-windows
 
 ## 编译与运行
 
-### macOS / Linux
+> **重要提示（Windows 用户）：项目路径请使用纯英文、无空格的目录**（例如 `D:\code\opengl-punching-bag-feedback`）。
+> 中文路径或带空格的路径常导致 CMake 配置失败或 vcpkg 依赖识别异常。
 
-```bash
-# 进入项目目录
-cd opengl-punching-bag-feedback
-
-# 创建构建目录（-p：目录已存在也不会报错）
-mkdir -p build && cd build
-
-# 配置（CMake 会自动检测 Homebrew 路径）
-cmake ..
-
-# 编译（--parallel 让 CMake 自动并行，跨平台通用）
-cmake --build . --parallel
-
-# 运行
-./punching_bag
-```
+下面按使用习惯，依次介绍三种方式：**Windows · Visual Studio 图形界面**、**Windows · 命令行**、**macOS / Linux**。
 
 ---
 
-### Windows（推荐使用 vcpkg + Visual Studio / CMake）
+### 一、Windows · Visual Studio 图形界面（推荐新手）
 
-> **重要提示：项目路径请使用纯英文目录**（例如 `D:\code\opengl-punching-bag-feedback`）。
-> 中文路径或带空格的路径常导致 CMake 配置失败或 vcpkg 依赖识别异常。
+几乎全程点鼠标即可完成，只有安装 vcpkg 依赖时需要用一次命令行。
+
+#### 1. 安装 Visual Studio
+
+到官网下载 **Visual Studio 社区版（Community，免费）**，运行安装器：
+
+- 勾选 **「使用 C++ 的桌面开发」(Desktop development with C++)** 工作负载；
+- 在右侧「安装详细信息」中确认包含 **「适用于 Windows 的 C++ CMake 工具」** 组件（一般默认已选）。
+
+> 建议使用 **Visual Studio 2019 或更高版本（推荐 2022）**，它们对 CMake 的内置支持较完善。
+> 不同版本的菜单文案与界面布局可能略有差异，按相近名称查找即可。
+> 「C++ CMake 工具」是关键，它让 Visual Studio 能直接打开 `CMakeLists.txt` 项目，无需手动生成解决方案。
+
+#### 2. 准备 vcpkg 依赖（命令行，仅一次）
+
+打开「Developer Command Prompt for VS」（开发者命令提示符，名称含你的 VS 版本号），依次执行：
+
+```bat
+:: 下载并初始化 vcpkg
+git clone https://github.com/microsoft/vcpkg.git C:\dev\vcpkg
+cd C:\dev\vcpkg
+bootstrap-vcpkg.bat
+
+:: 设为环境变量（VS 的 CMake 集成会自动检测它）
+setx VCPKG_ROOT C:\dev\vcpkg
+
+:: 与 Visual Studio 全局集成，使 VS 自动找到依赖
+C:\dev\vcpkg\vcpkg integrate install
+
+:: 安装本项目依赖（首次会编译，约 5～15 分钟）
+C:\dev\vcpkg\vcpkg install glfw3 glm glew --triplet x64-windows
+```
+
+> 执行完 `setx` 后，需关闭并重新打开终端 / Visual Studio，环境变量才会生效。
+
+#### 3. 打开项目
+
+1. 启动 Visual Studio → 开始窗口点击 **「打开本地文件夹」**（或菜单 `文件 → 打开 → 文件夹…`）。
+2. 选择项目根目录（即包含 `CMakeLists.txt` 的那一层）。
+3. VS 会自动检测 `CMakeLists.txt` 并执行 CMake 配置。可在 `视图 → 输出`（输出来源选 `CMake`）查看进度，出现 `CMake generation finished` 即配置成功。
+
+#### 4. 选择配置并编译
+
+1. 在顶部工具栏的 **配置下拉框** 中选择 **`x64-Release`**（若没有，点「管理配置…」添加一个 Release 配置）。
+2. 等待 VS 自动重新配置后，点击菜单 `生成 → 全部生成`（快捷键 `Ctrl+Shift+B`）。
+3. 输出窗口显示「生成: 成功 1 个」即编译完成；可执行文件位于 `out\build\x64-Release\punching_bag.exe`。
+
+#### 5. 运行与调试
+
+1. 在工具栏的 **启动项下拉框** 中选择 **`punching_bag.exe`**。
+2. 点击绿色三角 **▶** 运行（`Ctrl+F5` 不调试运行 / `F5` 调试运行）。
+3. 调试时可在 `src/main.cpp` 代码行左侧单击设置断点，`F10` 逐过程、`F11` 逐语句，悬停变量可查看其值（调试建议切到 `x64-Debug`）。
+
+> **备用方案**：若 VS 未装 CMake 工具，可先在命令行执行 `cmake .. -A x64` 生成 `build\PunchingBag.sln`，
+> 再双击用 VS 打开；在解决方案资源管理器中右键 `punching_bag` → 「设为启动项目」，把配置切到 `Release / x64`，按 `Ctrl+F5` 运行即可。
+
+---
+
+### 二、Windows · 命令行（vcpkg + CMake）
 
 #### 1. 安装 vcpkg（若尚未安装）
 
@@ -139,7 +182,7 @@ cmake --build . --config Release
 
 > 若使用 Ninja 等单配置生成器，可执行文件直接位于 `build\punching_bag.exe`。
 
-#### Windows 说明
+#### Windows 补充说明
 
 - 程序已在 `main()` 中调用 `SetConsoleOutputCP(CP_UTF8)`，控制台中文输出不会乱码。
 - CMake 已为 MSVC 自动添加 `/utf-8` 编译选项，保证含中文注释的源码正确编译。
@@ -150,6 +193,27 @@ cmake --build . --config Release
 > 自动把这些 DLL 拷贝到 exe 同目录。若双击运行报“缺少 xxx.dll”，请手动将这两个 DLL
 > （位于 `<vcpkg>\installed\x64-windows\bin\`）复制到 `punching_bag.exe` 所在目录即可。
 > 也可改用静态三联 `--triplet x64-windows-static` 安装依赖，从而生成不依赖 DLL 的可执行文件。
+
+---
+
+### 三、macOS / Linux
+
+```bash
+# 进入项目目录
+cd opengl-punching-bag-feedback
+
+# 创建构建目录（-p：目录已存在也不会报错）
+mkdir -p build && cd build
+
+# 配置（CMake 会自动检测 Homebrew 路径）
+cmake ..
+
+# 编译（--parallel 让 CMake 自动并行，跨平台通用）
+cmake --build . --parallel
+
+# 运行
+./punching_bag
+```
 
 ---
 
