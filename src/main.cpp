@@ -566,8 +566,9 @@ static void tryHit(double dx, double dy) {
 
     // 力度映射：先把滑动距离归一化到 [0,1]，再用 smoothstep 风格 S 曲线。
     // 小幅滑动被压低（手感更柔和），中高幅快速滑动迅速上升（更有爆发感）。
-    float t     = std::clamp((dist - SWIPE_MIN) / (SWIPE_MAX - SWIPE_MIN), 0.f, 1.f);
-    float force = glm::smoothstep(0.f, 1.f, t);
+    // 显式展开 smoothstep：3t² - 2t³，结果始终落在 [0,1]，不依赖 glm::smoothstep。
+    float rawForce = std::clamp((dist - SWIPE_MIN) / (SWIPE_MAX - SWIPE_MIN), 0.f, 1.f);
+    float force    = rawForce * rawForce * (3.f - 2.f * rawForce);
     g_lastForce    = force;   // 保留用于窗口标题显示
     g_forceDisplay = force;   // 同步更新 HUD 力度条
 
@@ -643,11 +644,12 @@ static void cbKey(GLFWwindow* win, int key, int, int action, int) {
         g_bag.spinAngle = g_bag.spinVel = 0.f;
         g_particles.clear();
         g_flashTime = 0.f;
-        // 同步归零新增的反馈状态：冷却 / 震动 / 力度条 / 冲击环
+        // 同步归零新增的反馈状态：冷却 / 震动 / 力度条 / 冲击环 / 标题力度
         g_lastHitTime  = -1.0;   // 允许重置后立即出拳
         g_shakeTime    = 0.f;
         g_shakeMag     = 0.f;
-        g_forceDisplay = 0.f;
+        g_forceDisplay = 0.f;    // HUD 力度条归零
+        g_lastForce    = 0.f;    // 窗口标题力度显示归零
         g_rings.clear();
         std::cout << "[重置] 沙袋已归位\n";
     }
